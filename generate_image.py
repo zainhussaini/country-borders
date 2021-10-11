@@ -71,7 +71,10 @@ def overlay_image(full_img, overlay_img, alpha_map, x, y):
     y1o, y2o = max(0, -y), min(overlay_img_height, full_img_height - y)
     x1o, x2o = max(0, -x), min(overlay_img_width, full_img_width - x)
 
-    full_img[y1:y2, x1:x2] = full_img[y1:y2, x1:x2]*(1-alpha_map) + overlay_img[y1o:y2o, x1o:x2o]*alpha_map
+    full_img_cropped = full_img[y1:y2, x1:x2]
+    alpha_map_cropped = alpha_map[y1o:y2o, x1o:x2o]
+    overlay_img_cropped = overlay_img[y1o:y2o, x1o:x2o]
+    full_img[y1:y2, x1:x2] = full_img_cropped*(1-alpha_map_cropped) + overlay_img_cropped*alpha_map_cropped
 
 def rotx(angle):
         return np.array([
@@ -125,12 +128,22 @@ class ImageGenerator:
         behind_params = [params for z_poss, params in z_poss_params if z_poss <= 0]
         front_params = [params for z_poss, params in z_poss_params if z_poss > 0]
 
+        z_pos, params = self.get_MGL_param(angle)
+
         full_img = self.full_img_base
 
-        full_img = self.draw_earth(full_img)
-        full_img = self.draw_country_flags(full_img, behind_params, darken=True)
-        full_img = self.draw_borders(full_img, angle)
-        full_img = self.draw_country_flags(full_img, front_params, darken=False)
+        if z_pos < 0:
+            full_img = self.draw_earth(full_img)
+            full_img = self.draw_MGL(full_img, params, darken=True)
+            full_img = self.draw_country_flags(full_img, behind_params, darken=True)
+            full_img = self.draw_borders(full_img, angle)
+            full_img = self.draw_country_flags(full_img, front_params, darken=False)
+        else:
+            full_img = self.draw_earth(full_img)
+            full_img = self.draw_country_flags(full_img, behind_params, darken=True)
+            full_img = self.draw_borders(full_img, angle)
+            full_img = self.draw_country_flags(full_img, front_params, darken=False)
+            full_img = self.draw_MGL(full_img, params, darken=True)
 
         return full_img
 
@@ -211,6 +224,41 @@ class ImageGenerator:
 
         return full_img.astype(np.uint8)
 
+    def draw_MGL(self, full_img, params, darken=False):
+        (_, M, ix, iy, box_width, box_height) = params
+        img = cv2.imread("media/more-cropped-mgl-logo-full-res.png", cv2.IMREAD_UNCHANGED)
+
+        # new_img = cv2.resize(img,
+        #     (self.icon_size, self.icon_size),
+        #     cv2.INTER_LANCZOS4)
+        new_img = img[:,:,:3]
+
+        alpha_map = cv2.warpPerspective(cv2.merge((img[:,:,3],)*3),
+            M = M,
+            dsize = (box_width, box_height),
+            flags = cv2.INTER_LINEAR,
+            borderMode = cv2.BORDER_CONSTANT,
+            borderValue = 0).astype(np.float32)/255
+
+        new_img = cv2.warpPerspective(new_img,
+            M = M,
+            dsize = (box_width, box_height),
+            flags = cv2.INTER_LINEAR,
+            borderMode = cv2.BORDER_REPLICATE).astype(np.float32)
+
+        full_img = full_img.astype(np.float32)
+        overlay_image(full_img, new_img, alpha_map, ix, iy)
+        return full_img.astype(np.uint8)
+
+    def get_MGL_param(self, angle):
+        img = cv2.imread("media/more-cropped-mgl-logo-full-res.png")
+        long = angle
+        lat = 0
+        M, ix, iy, box_width, box_height, z_pos = self.calc_transform(
+            img.shape, img.shape, long, lat)
+
+        return z_pos, ("MGL", M, ix, iy, box_width, box_height)
+
     def get_flag_params(self, angle):
         # Perform all the computation here so you can insert flags in correct order
         z_poss = []
@@ -257,7 +305,7 @@ class ImageGenerator:
         # calculate pts_new_img as if you were taking a icon_size x icon_size
         # image and rotating about long and lat, then scaling the image to fit
         # around the new dimensions
-        image_width, image_height = final_shape[:2]
+        image_height, image_width = final_shape[:2]
 
         angle_x = np.deg2rad(-lat)
         angle_y = np.deg2rad(long)
