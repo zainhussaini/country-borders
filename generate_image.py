@@ -71,7 +71,10 @@ def overlay_image(full_img, overlay_img, alpha_map, x, y):
     y1o, y2o = max(0, -y), min(overlay_img_height, full_img_height - y)
     x1o, x2o = max(0, -x), min(overlay_img_width, full_img_width - x)
 
-    full_img[y1:y2, x1:x2] = full_img[y1:y2, x1:x2]*(1-alpha_map) + overlay_img[y1o:y2o, x1o:x2o]*alpha_map
+    full_img_cropped = full_img[y1:y2, x1:x2]
+    alpha_map_cropped = alpha_map[y1o:y2o, x1o:x2o]
+    overlay_img_cropped = overlay_img[y1o:y2o, x1o:x2o]
+    full_img[y1:y2, x1:x2] = full_img_cropped*(1-alpha_map_cropped) + overlay_img_cropped*alpha_map_cropped
 
 def rotx(angle):
         return np.array([
