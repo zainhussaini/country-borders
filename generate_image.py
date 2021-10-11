@@ -4,6 +4,7 @@ import numpy as np
 from data import load_data
 import argparse
 from tqdm import tqdm
+from os.path import exists
 
 
 EARTH_RADIUS = 6e3 # value doesn't actually matter
@@ -112,10 +113,11 @@ class ImageGenerator:
         self.full_img_base = full_img_base
 
         self.code_to_info, self.edges = load_data()
-        self.code_to_img = dict()
+        self.code_to_filename = dict()
         for code in self.code_to_info:
-            filename = code.lower()+".png"
-            self.code_to_img[code] = cv2.imread("h240/"+filename)
+            filename = "h240/"+code.lower()+".png"
+            assert exists(filename)
+            self.code_to_filename[code] = filename
 
     def generate(self, angle=0):
         z_poss, params = self.get_flag_params(angle)
@@ -182,8 +184,6 @@ class ImageGenerator:
             lineType = cv2.LINE_AA)
 
         for (code, M, ix, iy, box_width, box_height) in params:
-            img = self.code_to_img[code]
-
             alpha_map = cv2.warpPerspective(circle,
                 M = M,
                 dsize = (box_width, box_height),
@@ -195,6 +195,8 @@ class ImageGenerator:
                 new_img = np.zeros((box_height, box_width, 3), np.float32)
                 new_img[:, :] = COUNTRY_SHADOW_COLOR
             else:
+                img = cv2.imread(self.code_to_filename[code])
+
                 # M, ix, iy, box_width, box_height = self.calc_transform(img.shape, long, lat)
                 # new_img = cv2.warpPerspective(img,
                 #     M = M,
@@ -220,7 +222,7 @@ class ImageGenerator:
         # Perform all the computation here so you can insert flags in correct order
         z_poss = []
         params = []
-        for code, img in self.code_to_img.items():
+        for code in self.code_to_filename:
             long = self.code_to_info[code].longitude + angle
             lat = self.code_to_info[code].latitude
 
