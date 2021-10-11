@@ -197,13 +197,6 @@ class ImageGenerator:
             else:
                 img = cv2.imread(self.code_to_filename[code])
 
-                # M, ix, iy, box_width, box_height = self.calc_transform(img.shape, long, lat)
-                # new_img = cv2.warpPerspective(img,
-                #     M = M,
-                #     dsize = (box_width, box_height),
-                #     flags = cv2.INTER_LINEAR,
-                #     cv2.BORDER_REPLICATE).astype(np.float32)
-
                 new_img = cv2.resize(img,
                     (self.icon_size, self.icon_size),
                     cv2.INTER_LANCZOS4)
@@ -227,7 +220,7 @@ class ImageGenerator:
             lat = self.code_to_info[code].latitude
 
             M, ix, iy, box_width, box_height, z_pos = self.calc_transform(
-                (self.icon_size, self.icon_size), long, lat)
+                (self.icon_size, self.icon_size), (self.icon_size, self.icon_size), long, lat)
             z_poss.append(z_pos)
             params.append((code, M, ix, iy, box_width, box_height))
 
@@ -257,15 +250,14 @@ class ImageGenerator:
         y = self.image_height//2  - iy
         return (x, y)
 
-    def calc_transform(self, shape, long, lat):
+    def calc_transform(self, start_shape, final_shape, long, lat):
         """Calculate transformation matrix from full image to icon_size with
         distortion based on long and lat.
         """
         # calculate pts_new_img as if you were taking a icon_size x icon_size
         # image and rotating about long and lat, then scaling the image to fit
         # around the new dimensions
-        image_width = self.icon_size
-        image_height = self.icon_size
+        image_width, image_height = final_shape[:2]
 
         angle_x = np.deg2rad(-lat)
         angle_y = np.deg2rad(long)
@@ -312,7 +304,7 @@ class ImageGenerator:
         assert (np.max(pts_new_img_centered, axis=0) <= np.array([[box_width, box_height]])).all()
 
         # calculate the actual pts_original_img
-        image_height, image_width = shape
+        image_height, image_width = start_shape[:2]
         pts_original_img = np.array([
             (0, 0),
             (image_width, 0),
