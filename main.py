@@ -5,12 +5,16 @@ import numpy as np
 from numpy.core.numeric import full
 from numpy.lib.function_base import iterable
 from numpy.lib.type_check import imag
+from pandas.core.indexes import base
 from data import load_data
 import argparse
 from tqdm import tqdm
 from os.path import exists
 import videoio
 import multiprocessing
+
+# from line_profiler import LineProfiler
+# profile = LineProfiler()
 
 
 EARTH_RADIUS = 6e3 # value doesn't actually matter
@@ -114,7 +118,7 @@ def apply_transform(img, params):
         M,
         (box_width, box_height),
         flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT).astype(np.float32)
+        borderMode=cv2.BORDER_CONSTANT)
 
     alpha_map = cv2.warpAffine(ellipse,
         M,
@@ -135,8 +139,8 @@ def overlay_image(full_img, overlay_img, alpha_map, x, y):
         x, y - top left position of overlay_img in full_img
     """
     assert overlay_img.shape == alpha_map.shape
-    assert full_img.dtype == np.float32
-    assert overlay_img.dtype == np.float32
+    assert full_img.dtype == np.uint8
+    assert overlay_img.dtype == np.uint8
     assert alpha_map.dtype == np.float32
     assert np.max(alpha_map) <= 1 and np.min(alpha_map) >= 0
 
@@ -193,6 +197,8 @@ def save_image(img, filepath):
 
 
 def draw_earth(full_img: np.ndarray):
+    assert full_img.dtype == np.uint8
+
     # add circle for earth
     image_height, image_width, _ = full_img.shape
     earth_radius_px = min(image_width, image_height)*3/8
@@ -209,28 +215,33 @@ def draw_earth(full_img: np.ndarray):
 
 
 def draw_stars(full_img: np.ndarray):
-    # TODO: make this take in scaled image to match others
-    # add stars
+    assert full_img.dtype == np.uint8
+
     image_height, image_width, _ = full_img.shape
     np.random.seed(0)
-    for i in range(image_width*image_height//2048):
+    for i in range(image_width*image_height//8192):
         ix = np.random.randint(0, image_width)
         iy = np.random.randint(0, image_height)
-        full_img[iy, ix] = (255, 255, 255)
 
-        # 5% of stars are extra big
-        if i%20 == 0:
-            if ix+1 < image_width and iy+1 < image_height:
-                full_img[iy, ix+1] = (255, 255, 255)
-                full_img[iy+1, ix] = (255, 255, 255)
-                full_img[iy+1, ix+1] = (255, 255, 255)
-            elif ix+1 < image_width:
-                full_img[iy, ix+1] = (255, 255, 255)
-            elif iy+1 < image_height:
-                full_img[iy+1, ix] = (255, 255, 255)
+        # full_img[iy, ix] = (255, 255, 255)
+        # # 5% of stars are extra big
+        # if i%20 == 0:
+        #     if ix+1 < image_width and iy+1 < image_height:
+        #         full_img[iy, ix+1] = (255, 255, 255)
+        #         full_img[iy+1, ix] = (255, 255, 255)
+        #         full_img[iy+1, ix+1] = (255, 255, 255)
+        #     elif ix+1 < image_width:
+        #         full_img[iy, ix+1] = (255, 255, 255)
+        #     elif iy+1 < image_height:
+        #         full_img[iy+1, ix] = (255, 255, 255)
+
+        radius = int(np.random.poisson(UPSCALE//2))
+        full_img[:] = cv2.circle(full_img, (ix, iy), radius, (255, 255, 255), cv2.FILLED, cv2.LINE_8)
 
 
 def draw_borders(full_img, angle):
+    assert full_img.dtype == np.uint8
+
     # draw shared border lines
     image_height, image_width, _ = full_img.shape
     earth_radius_px = min(image_width, image_height)*3/8
@@ -255,7 +266,7 @@ def draw_borders(full_img, angle):
         isClosed = False,
         color = BORDERS_COLOR,
         thickness = UPSCALE,
-        lineType = cv2.LINE_8,
+        lineType = cv2.LINE_AA,
         shift = shift)
 
 
@@ -300,7 +311,6 @@ def draw_visible_flags(full_img: np.ndarray, angle):
             overlay_image(full_img, overlay_img, alpha_map, params[1], params[2])
 
 
-@profile
 def draw_hidden_flags(full_img: np.ndarray, angle):
     image_height, image_width, _ = full_img.shape
     icon_size = min(image_height, image_width)//40
@@ -314,81 +324,105 @@ def draw_hidden_flags(full_img: np.ndarray, angle):
 
         if z_avg_px < 0:
             img = np.zeros(img.shape, np.uint8)
-            img[:, :] = COUNTRY_SHADOW_COLOR
+            img[:] = COUNTRY_SHADOW_COLOR
             overlay_img, alpha_map = apply_transform(img, params)
             overlay_image(full_img, overlay_img, alpha_map, params[1], params[2])
 
 
-@profile
-def generate_frame(image_width, image_height, angle):
-    full_img = np.zeros((image_height, image_width, 3), dtype=np.uint8)
-    full_img[:,:] = BACKGROUND_COLOR
-    draw_stars(full_img)
-
-    # upscale
-    full_img = cv2.resize(full_img, (image_width*UPSCALE, image_height*UPSCALE), interpolation=cv2.INTER_LINEAR).astype(np.float32)
-
-    # do operations
-    draw_earth(full_img)
+def generate_frame(base_img, angle):
+    full_img = base_img.copy()
     draw_hidden_flags(full_img, angle)
     draw_borders(full_img, angle)
     draw_visible_flags(full_img, angle)
 
     # downscale
-    full_img = cv2.resize(full_img, (image_width, image_height), interpolation=cv2.INTER_AREA).astype(np.uint8)
+    image_height, image_width, _ = base_img.shape
+    full_img = cv2.resize(full_img, (image_width//UPSCALE, image_height//UPSCALE), interpolation=cv2.INTER_AREA)
     return full_img
 
 
-def generate_image():
-    # parser = argparse.ArgumentParser(description="Generate an image of 3D globe.")
-    # parser.add_argument("width", help="width of output image", type=int, default=1920)
-    # parser.add_argument("height", help="height of output image", type=int, default=1080)
-    # args = parser.parse_args()
-    # image_width = args.width
-    # image_height = args.height
-
-    image_width = 1920
-    image_height = 1080
-
-    angle = 0
-    frame = generate_frame(image_width, image_height, angle)
+def generate_image(base_img, angle=0):
+    frame = generate_frame(base_img, angle)
+    image_height, image_width, _ = frame.shape
     save_image(frame, f"media/image_{image_width}x{image_height}.png")
-    # show_image(frame)
+    show_image(frame)
 
 
 def helper(params):
-    image_width, image_height, angle = params
-    return cv2.cvtColor(generate_frame(image_width, image_height, angle), cv2.BGR2RGB)
+    base_img, angle = params
+    frame = generate_frame(base_img.copy(), angle)
+    return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 
-def generate_video():
-    # parser = argparse.ArgumentParser(description="Generate an image of 3D globe.")
-    # parser.add_argument("width", help="width of output image", type=int, default=1920)
-    # parser.add_argument("height", help="height of output image", type=int, default=1080)
-    # args = parser.parse_args()
-    # image_width = args.width
-    # image_height = args.height
-
-    image_width = 1920
-    image_height = 1080
+def generate_video(base_img):
+    image_height, image_width, _ = base_img.shape
+    image_height = image_height//UPSCALE
+    image_width = image_width//UPSCALE
+    filepath = f"media/video_{image_width}x{image_height}.mp4"
 
     fps = 60
     time = 12
-    angles = np.linspace(0, 360, int(fps*12), endpoint=False)
-    filepath = f"media/video_{image_width}x{image_height}.mp4"
+    angles = np.linspace(0, 360, int(fps*time), endpoint=False)
 
-    params_list = [(image_width, image_height, angle) for angle in angles]
+    params_list = ((base_img.copy(), angle) for angle in angles)
 
     with videoio.VideoWriter(filepath, (image_width, image_height), fps=fps) as writer:
         with multiprocessing.Pool() as pool:
-            for frame in tqdm(pool.imap(helper, params_list), total=len(params_list)):
+            for frame in tqdm(pool.imap(helper, params_list), total=len(angles)):
                 writer.write(frame)
     subprocess.run(f"mpv {filepath} --fs --loop".split(" "))
 
 
+def generate_video_sequential(base_img):
+    image_height, image_width, _ = base_img.shape
+    image_height = image_height//UPSCALE
+    image_width = image_width//UPSCALE
+    filepath = f"media/video_{image_width}x{image_height}.mp4"
+
+    fps = 1
+    time = 12
+    angles = np.linspace(0, 360, int(fps*time), endpoint=False)
+
+    writer = videoio.VideoWriter(filepath, (image_width, image_height), fps=fps)
+    for angle in tqdm(angles):
+        params = (base_img, angle)
+        frame = helper(params)
+        assert frame.shape == (image_height, image_width, 3)
+        writer.write(frame)
+    writer.close()
+    # subprocess.run(f"mpv {filepath} --fs --loop".split(" "))
+
+
 if __name__ == '__main__':
-    UPSCALE = 4
+    # parser = argparse.ArgumentParser(description="Generate an image of 3D globe.")
+    # parser.add_argument("width", help="width of output image", type=int, default=1920)
+    # parser.add_argument("height", help="height of output image", type=int, default=1080)
+    # args = parser.parse_args()
+    # image_width = args.width
+    # image_height = args.height
+
+    image_width = 1920
+    image_height = 1080
+    angle = 0
+    UPSCALE = 1
+
     CODE_TO_INFO, EDGES = load_data()
-    CODE_TO_IMGS = {code: cv2.imread(f"h240/{code.lower()}.png") for code in CODE_TO_INFO}
+
+    # CODE_TO_IMGS = {code: cv2.imread(f"h240/{code.lower()}.png") for code in CODE_TO_INFO}
+
+    icon_size = min(image_height*UPSCALE, image_width*UPSCALE)//40
+    CODE_TO_IMGS = dict()
+    for code in CODE_TO_INFO:
+        filename = f"h240/{code.lower()}.png"
+        img = cv2.resize(cv2.imread(filename), (icon_size, icon_size), interpolation=cv2.INTER_AREA)
+        CODE_TO_IMGS[code] = img
     assert CODE_TO_INFO.keys() == CODE_TO_IMGS.keys()
-    generate_image()
+
+    base_img = np.zeros((image_height*UPSCALE, image_width*UPSCALE, 3), dtype=np.uint8)
+    base_img[:,:] = BACKGROUND_COLOR
+    draw_stars(base_img)
+    draw_earth(base_img)
+
+    generate_image(base_img, angle)
+    # generate_video(base_img)
+    # generate_video_sequential(base_img)
