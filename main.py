@@ -112,7 +112,7 @@ def apply_transform(img, params):
         0, 0, 360,
         (255, 255, 255),
         cv2.FILLED,
-        cv2.LINE_AA)
+        cv2.LINE_8)
 
     overlay_img = cv2.warpAffine(img,
         M,
@@ -126,8 +126,9 @@ def apply_transform(img, params):
         flags=cv2.INTER_LINEAR,
         borderMode=cv2.BORDER_CONSTANT)
 
+    alpha_map = cv2.blur(alpha_map, (3, 3), borderType=cv2.BORDER_CONSTANT)
+    # show_image(alpha_map)
     alpha_map = alpha_map.astype(np.float32)/255
-    # alpha_map = cv2.blur(alpha_map, (3, 3), borderType=cv2.BORDER_CONSTANT).astype(np.float32)/255
 
     return overlay_img, alpha_map
 
@@ -235,7 +236,7 @@ def draw_stars(full_img: np.ndarray):
         #     elif iy+1 < image_height:
         #         full_img[iy+1, ix] = (255, 255, 255)
 
-        radius = int(np.random.poisson(UPSCALE//2))
+        radius = int(np.random.poisson(1))
         full_img[:] = cv2.circle(full_img, (ix, iy), radius, (255, 255, 255), cv2.FILLED, cv2.LINE_8)
 
 
@@ -265,7 +266,7 @@ def draw_borders(full_img, angle):
         pts = (np.array(lines) * 2**shift).astype(np.int32),
         isClosed = False,
         color = BORDERS_COLOR,
-        thickness = UPSCALE,
+        thickness = 1,
         lineType = cv2.LINE_AA,
         shift = shift)
 
@@ -334,10 +335,6 @@ def generate_frame(base_img, angle):
     draw_hidden_flags(full_img, angle)
     draw_borders(full_img, angle)
     draw_visible_flags(full_img, angle)
-
-    # downscale
-    image_height, image_width, _ = base_img.shape
-    full_img = cv2.resize(full_img, (image_width//UPSCALE, image_height//UPSCALE), interpolation=cv2.INTER_AREA)
     return full_img
 
 
@@ -356,13 +353,11 @@ def helper(params):
 
 def generate_video(base_img):
     image_height, image_width, _ = base_img.shape
-    image_height = image_height//UPSCALE
-    image_width = image_width//UPSCALE
     filepath = f"media/video_{image_width}x{image_height}.mp4"
 
     fps = 60
     time = 12
-    angles = np.linspace(0, 360, int(fps*time), endpoint=False)
+    angles = np.linspace(0, 360, fps*time, endpoint=False)
 
     params_list = ((base_img.copy(), angle) for angle in angles)
 
@@ -370,59 +365,58 @@ def generate_video(base_img):
         with multiprocessing.Pool() as pool:
             for frame in tqdm(pool.imap(helper, params_list), total=len(angles)):
                 writer.write(frame)
-    subprocess.run(f"mpv {filepath} --fs --loop".split(" "))
+    # subprocess.run(f"mpv {filepath} --fs --loop".split(" "))
 
 
 def generate_video_sequential(base_img):
     image_height, image_width, _ = base_img.shape
-    image_height = image_height//UPSCALE
-    image_width = image_width//UPSCALE
     filepath = f"media/video_{image_width}x{image_height}.mp4"
 
     fps = 1
     time = 12
     angles = np.linspace(0, 360, int(fps*time), endpoint=False)
 
-    writer = videoio.VideoWriter(filepath, (image_width, image_height), fps=fps)
+    frames = []
     for angle in tqdm(angles):
         params = (base_img, angle)
         frame = helper(params)
         assert frame.shape == (image_height, image_width, 3)
-        writer.write(frame)
-    writer.close()
+        frames.append(frame)
+
+    videoio.videosave(filepath, frames, fps=60)
     # subprocess.run(f"mpv {filepath} --fs --loop".split(" "))
 
 
 if __name__ == '__main__':
-    # parser = argparse.ArgumentParser(description="Generate an image of 3D globe.")
-    # parser.add_argument("width", help="width of output image", type=int, default=1920)
-    # parser.add_argument("height", help="height of output image", type=int, default=1080)
-    # args = parser.parse_args()
-    # image_width = args.width
-    # image_height = args.height
+    parser = argparse.ArgumentParser(description="Generate an image of 3D globe.")
+    parser.add_argument("width", help="width of output image", type=int, default=1920)
+    parser.add_argument("height", help="height of output image", type=int, default=1080)
+    args = parser.parse_args()
+    image_width = args.width
+    image_height = args.height
 
-    image_width = 1920
-    image_height = 1080
+    # image_w = 3440
+    # image_height = 1440idth
     angle = 0
-    UPSCALE = 1
 
     CODE_TO_INFO, EDGES = load_data()
 
-    # CODE_TO_IMGS = {code: cv2.imread(f"h240/{code.lower()}.png") for code in CODE_TO_INFO}
+    CODE_TO_IMGS = {code: cv2.imread(f"h240/{code.lower()}.png") for code in CODE_TO_INFO}
 
-    icon_size = min(image_height*UPSCALE, image_width*UPSCALE)//40
-    CODE_TO_IMGS = dict()
-    for code in CODE_TO_INFO:
-        filename = f"h240/{code.lower()}.png"
-        img = cv2.resize(cv2.imread(filename), (icon_size, icon_size), interpolation=cv2.INTER_AREA)
-        CODE_TO_IMGS[code] = img
+    # icon_size = min(image_height, image_width)//40
+    # CODE_TO_IMGS = dict()
+    # for code in CODE_TO_INFO:
+    #     filename = f"h240/{code.lower()}.png"
+    #     img = cv2.resize(cv2.imread(filename), (icon_size, icon_size), interpolation=cv2.INTER_AREA)
+    #     CODE_TO_IMGS[code] = img
+
     assert CODE_TO_INFO.keys() == CODE_TO_IMGS.keys()
 
-    base_img = np.zeros((image_height*UPSCALE, image_width*UPSCALE, 3), dtype=np.uint8)
+    base_img = np.zeros((image_height, image_width, 3), dtype=np.uint8)
     base_img[:,:] = BACKGROUND_COLOR
     draw_stars(base_img)
     draw_earth(base_img)
 
-    generate_image(base_img, angle)
-    # generate_video(base_img)
+    # generate_image(base_img, angle)
+    generate_video(base_img)
     # generate_video_sequential(base_img)
