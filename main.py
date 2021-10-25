@@ -8,10 +8,12 @@ import os
 
 
 EARTH_RADIUS = 6e3 # value doesn't actually matter
-BACKGROUND_COLOR = (20, 20, 20) # BGR
-EARTH_COLOR = (30, 30, 30) # BGR
-BORDERS_COLOR = (255, 255, 255) # BGR
+# Note: colors in (B, G, R) format (integer out of 255)
+BACKGROUND_COLOR = (20, 20, 20)
+EARTH_COLOR = (30, 30, 30)
+BORDERS_COLOR = (255, 255, 255)
 COUNTRY_SHADOW_COLOR = (60, 60, 60)
+STARS_COLOR = (255, 255, 255)
 CODEC = "mp4v"
 VID_EXT = "mp4"
 
@@ -221,24 +223,21 @@ def draw_stars(full_img: np.ndarray):
 
     image_height, image_width, _ = full_img.shape
     np.random.seed(0)
-    for i in range(image_width*image_height//8192):
+    for i in range(image_width*image_height//2048):
         ix = np.random.randint(0, image_width)
         iy = np.random.randint(0, image_height)
 
-        # full_img[iy, ix] = (255, 255, 255)
-        # # 5% of stars are extra big
-        # if i%20 == 0:
-        #     if ix+1 < image_width and iy+1 < image_height:
-        #         full_img[iy, ix+1] = (255, 255, 255)
-        #         full_img[iy+1, ix] = (255, 255, 255)
-        #         full_img[iy+1, ix+1] = (255, 255, 255)
-        #     elif ix+1 < image_width:
-        #         full_img[iy, ix+1] = (255, 255, 255)
-        #     elif iy+1 < image_height:
-        #         full_img[iy+1, ix] = (255, 255, 255)
-
-        radius = int(np.random.poisson(1))
-        full_img[:] = cv2.circle(full_img, (ix, iy), radius, (255, 255, 255), cv2.FILLED, cv2.LINE_8)
+        full_img[iy, ix] = (255, 255, 255)
+        # 5% of stars are extra big
+        if i%20 == 0:
+            if ix+1 < image_width and iy+1 < image_height:
+                full_img[iy, ix+1] = (255, 255, 255)
+                full_img[iy+1, ix] = (255, 255, 255)
+                full_img[iy+1, ix+1] = (255, 255, 255)
+            elif ix+1 < image_width:
+                full_img[iy, ix+1] = (255, 255, 255)
+            elif iy+1 < image_height:
+                full_img[iy+1, ix] = (255, 255, 255)
 
 
 def draw_borders(full_img, angle):
@@ -365,7 +364,6 @@ def generate_video(base_img):
 
     params_list = ((base_img.copy(), angle) for angle in angles)
 
-    # with videoio.VideoWriter(filepath, (image_width, image_height), fps=fps) as writer
     fourcc = cv2.VideoWriter.fourcc(*CODEC)
     writer = cv2.VideoWriter(filepath, fourcc, fps, (image_width, image_height))
     with Pool() as pool:
@@ -383,7 +381,6 @@ def generate_video_sequential(base_img):
     time = 12
     angles = np.linspace(0, 360, int(fps*time), endpoint=False)
 
-    # with videoio.VideoWriter(filepath, (image_width, image_height), fps=fps) as writer
     fourcc = cv2.VideoWriter.fourcc(*CODEC)
     writer = cv2.VideoWriter(filepath, fourcc, fps, (image_width, image_height))
     for angle in tqdm(angles):
