@@ -102,15 +102,15 @@ def calc_transform(img_shape, full_img_shape, icon_shape, long, lat):
         [img_width, img_height]],
         np.float32)
 
-    M = cv2.getAffineTransform(pts_original_img[:3], pts_new_img_centered[:3])
+    M_matrix = cv2.getAffineTransform(pts_original_img[:3], pts_new_img_centered[:3])
     ix, iy, box_width, box_height = [int(i) for i in (ix, iy, box_width, box_height)]
-    params = (M, ix, iy, box_width, box_height, z_avg_px)
+    params = (M_matrix, ix, iy, box_width, box_height, z_avg_px)
     return params
 
 
 def apply_transform(img, params, transform_img=True):
     assert img.dtype == np.uint8
-    M, ix, iy, box_width, box_height, z_avg_px = params
+    M_matrix, ix, iy, box_width, box_height, z_avg_px = params
     ellipse = cv2.ellipse(np.zeros(img.shape, np.uint8),
         (img.shape[1]//2, img.shape[0]//2),
         (img.shape[1]//2, img.shape[0]//2),
@@ -122,7 +122,7 @@ def apply_transform(img, params, transform_img=True):
     upscale_factor = 4
 
     alpha_map = cv2.warpAffine(ellipse,
-        upscale_factor*M,
+        upscale_factor*M_matrix,
         (upscale_factor*box_width, upscale_factor*box_height),
         flags=cv2.INTER_NEAREST,
         borderMode=cv2.BORDER_CONSTANT)
@@ -135,7 +135,7 @@ def apply_transform(img, params, transform_img=True):
         return alpha_map
 
     overlay_img = cv2.warpAffine(img,
-        upscale_factor*M,
+        upscale_factor*M_matrix,
         (upscale_factor*box_width, upscale_factor*box_height),
         flags=cv2.INTER_NEAREST,
         borderMode=cv2.BORDER_REPLICATE)
