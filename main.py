@@ -5,6 +5,7 @@ import argparse
 from tqdm import tqdm
 from multiprocessing import Pool
 import os
+import subprocess
 
 
 EARTH_RADIUS = 6e3 # value doesn't actually matter
@@ -107,7 +108,7 @@ def calc_transform(img_shape, full_img_shape, icon_shape, long, lat):
     return params
 
 
-def apply_transform(img, params):
+def apply_transform(img, params, transform_img=True):
     assert img.dtype == np.uint8
     M, ix, iy, box_width, box_height, z_avg_px = params
     ellipse = cv2.ellipse(np.zeros(img.shape, np.uint8),
@@ -118,21 +119,27 @@ def apply_transform(img, params):
         cv2.FILLED,
         cv2.LINE_8)
 
-    overlay_img = cv2.warpAffine(img,
-        M,
-        (box_width, box_height),
-        flags=cv2.INTER_AREA,
-        borderMode=cv2.BORDER_CONSTANT)
+    upscale_factor = 4
 
     alpha_map = cv2.warpAffine(ellipse,
-        M,
-        (box_width, box_height),
+        upscale_factor*M,
+        (upscale_factor*box_width, upscale_factor*box_height),
         flags=cv2.INTER_NEAREST,
         borderMode=cv2.BORDER_CONSTANT)
+    alpha_map = cv2.resize(alpha_map, (box_width, box_height), interpolation=cv2.INTER_AREA)
 
-    alpha_map = cv2.blur(alpha_map, (3, 3), borderType=cv2.BORDER_CONSTANT)
+    # alpha_map = cv2.blur(alpha_map, (3, 3), borderType=cv2.BORDER_CONSTANT)
     alpha_map = alpha_map.astype(np.float32)/255
 
+    if not transform_img:
+        return alpha_map
+
+    overlay_img = cv2.warpAffine(img,
+        upscale_factor*M,
+        (upscale_factor*box_width, upscale_factor*box_height),
+        flags=cv2.INTER_NEAREST,
+        borderMode=cv2.BORDER_REPLICATE)
+    overlay_img = cv2.resize(overlay_img, (box_width, box_height), interpolation=cv2.INTER_AREA)
     return overlay_img, alpha_map
 
 
@@ -162,6 +169,11 @@ def overlay_image(full_img, overlay_img, alpha_map, x, y):
     full_img_cropped = full_img[y1:y2, x1:x2]
     alpha_map_cropped = alpha_map[y1o:y2o, x1o:x2o]
     overlay_img_cropped = overlay_img[y1o:y2o, x1o:x2o]
+    # a = full_img_cropped
+    # b = overlay_img_cropped
+    # c = alpha_map_cropped*255
+    # d = full_img_cropped*(1-alpha_map_cropped) + overlay_img_cropped*alpha_map_cropped
+    # show_image(np.concatenate((np.concatenate((a, b), axis=1), np.concatenate((c, d), axis=1)), axis=0))
     full_img[y1:y2, x1:x2] = full_img_cropped*(1-alpha_map_cropped) + overlay_img_cropped*alpha_map_cropped
 
 
@@ -261,7 +273,7 @@ def draw_borders(full_img, angle):
         lines.append([[ix1, iy1], [ix2, iy2]])
 
     # shift to get better accuracy on end point locations
-    shift = 2
+    shift = 4
     full_img[:] = cv2.polylines(full_img,
         pts = (np.array(lines) * 2**shift).astype(np.int32),
         isClosed = False,
@@ -285,10 +297,12 @@ def geo_to_xy(long: float, lat: float, earth_radius_px: float):
 
     return (x, y)
 
+
 def xy_to_img(x: float, y: float, image_width: int, image_height: int):
     ix = x + image_width//2
     iy = image_height//2 - y
     return (ix, iy)
+
 
 def img_to_xy(self, ix: float, iy: float, image_width: int, image_height: int):
     x = ix - image_width//2
@@ -324,9 +338,9 @@ def draw_hidden_flags(full_img: np.ndarray, angle):
         z_avg_px = params[-1]
 
         if z_avg_px < 0:
-            img = np.zeros(img.shape, np.uint8)
-            img[:] = COUNTRY_SHADOW_COLOR
-            overlay_img, alpha_map = apply_transform(img, params)
+            alpha_map = apply_transform(img, params, False)
+            overlay_img = np.zeros(alpha_map.shape, np.uint8)
+            overlay_img[:] = COUNTRY_SHADOW_COLOR
             overlay_image(full_img, overlay_img, alpha_map, params[1], params[2])
 
 
@@ -343,7 +357,6 @@ def generate_image(base_img, angle=0):
     image_height, image_width, _ = frame.shape
     filepath = os.path.join("media", f"image_{image_width}x{image_height}.png")
     save_image(frame, filepath)
-    # show_image(frame)
 
 
 def helper(params):
@@ -355,7 +368,7 @@ def helper(params):
 
 def generate_video(base_img):
     image_height, image_width, _ = base_img.shape
-    filepath = os.path.join(os.getcwd(), "media", f"video_{image_width}x{image_height}_{CODEC}.{VID_EXT}")
+    filepath = os.path.join(os.getcwd(), "media", f"video_{image_width}x{image_height}.{VID_EXT}")
     print(filepath)
 
     fps = 60
@@ -370,6 +383,13 @@ def generate_video(base_img):
         for frame in tqdm(pool.imap(helper, params_list), total=len(angles)):
             writer.write(frame)
     writer.release()
+
+    temppath = "temp.mp4"
+    subprocess.run(f"mv {filepath} {temppath}".split(" "))
+    # https://gist.github.com/Vestride/278e13915894821e1d6f
+    subprocess.run(f"ffmpeg -an -i {temppath} -vcodec libx264 -pix_fmt yuv420p -profile:v baseline -level 3 {filepath}".split(" "))
+    subprocess.run(f"rm {temppath}".split(" "))
+
     # subprocess.run(f"mpv {filepath} --fs --loop".split(" "))
 
 
@@ -386,9 +406,16 @@ def generate_video_sequential(base_img):
     for angle in tqdm(angles):
         params = (base_img, angle)
         frame = helper(params)
+        show_image(frame)
         assert frame.shape == (image_height, image_width, 3)
         writer.write(frame)
     writer.release()
+
+    # temppath = "temp.mp4"
+    # subprocess.run(f"mv {filepath} {temppath}".split(" "))
+    # subprocess.run(f"ffmpeg -an -i {temppath} -vcodec libx264 -pix_fmt yuv420p -profile:v baseline -level 3 {filepath}".split(" "))
+    # subprocess.run(f"rm {temppath}".split(" "))
+
     # subprocess.run(f"mpv {filepath} --fs --loop".split(" "))
 
 
