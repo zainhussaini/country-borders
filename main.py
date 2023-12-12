@@ -384,7 +384,7 @@ def generate_video(base_img):
             writer.write(frame)
     writer.release()
 
-    temppath = "temp.mp4"
+    temppath = f"temp.{VID_EXT}"
     subprocess.run(f"mv {filepath} {temppath}".split(" "))
     # https://gist.github.com/Vestride/278e13915894821e1d6f
     subprocess.run(f"ffmpeg -an -i {temppath} -vcodec libx264 -pix_fmt yuv420p -profile:v baseline -level 3 {filepath}".split(" "))
